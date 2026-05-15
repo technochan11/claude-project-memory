@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "outDir": "dist/server",
+    "types": ["node"],
+    "noEmit": false,
+    "paths": {
+      "@cpm/shared": ["../shared/src/index.ts"],
+      "@cpm/shared/*": ["../shared/src/*"]
+    },
+    "baseUrl": "."
+  },
+  "include": ["src/server/**/*", "../shared/src/**/*"]
+}

@@ -1,0 +1,30 @@
+{
+  "name": "claude-project-memory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal-use system giving Claude long-term project memory via a local web app + Chrome extension.",
+  "workspaces": [
+    "packages/shared",
+    "packages/web-app",
+    "packages/extension"
+  ],
+  "scripts": {
+    "setup": "node scripts/run-setup.js",
+    "dev": "npm run dev --workspace=web-app",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "eslint \"packages/*/src/**/*.{ts,tsx}\"",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "start": "npm run start --workspace=web-app"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.2.0",
+    "typescript": "^5.4.0"
+  }
+}

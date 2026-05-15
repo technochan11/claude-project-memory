@@ -1,0 +1,30 @@
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+
+# Local databases and data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Editor
+.vscode/
+.idea/
+
+# Logs
+logs/
+*.tsbuildinfo
+
+# Vite
+.vite/
+
+# Transformers.js model cache (if dev-local)
+.cache/
