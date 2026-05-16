@@ -2,6 +2,7 @@
   "name": "claude-project-memory",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Personal-use system giving Claude long-term project memory via a local web app + Chrome extension.",
   "workspaces": [
     "packages/shared",

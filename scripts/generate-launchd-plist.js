@@ -27,6 +27,7 @@ const nodeBin = args.node;
 const repoDir = path.resolve(args.repo);
 const logsDir = path.resolve(args.logs);
 const outPath = path.resolve(args.out);
+const label = args.label || 'com.claude-project-memory';
 
 const tsxBin = path.join(repoDir, 'node_modules', '.bin', 'tsx');
 const serverEntry = path.join(repoDir, 'packages', 'web-app', 'src', 'server', 'index.ts');
@@ -44,7 +45,7 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.claude-project-memory</string>
+  <string>${label}</string>
   <key>ProgramArguments</key>
   <array>
     <string>${nodeBin}</string>
