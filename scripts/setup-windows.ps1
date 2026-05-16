@@ -28,6 +28,10 @@ if (-not (Test-Path $TsxBin)) {
   Write-Error "[setup] tsx not installed at $TsxBin. Run 'npm install' first."
 }
 
+Write-Host "[setup] building client bundle..."
+Push-Location $RepoDir
+try { npm run build --silent } finally { Pop-Location }
+
 $Action = New-ScheduledTaskAction -Execute $TsxBin -Argument "`"$ServerEntry`"" -WorkingDirectory $RepoDir
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
 $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -AllowStartIfOnBatteries

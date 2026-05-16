@@ -29,6 +29,9 @@ if [ -z "$NODE_BIN" ]; then
   exit 1
 fi
 
+echo "[setup] building client bundle…"
+(cd "$REPO_DIR" && npm run build --silent)
+
 echo "[setup] generating launchd plist…"
 node "$REPO_DIR/scripts/generate-launchd-plist.js" \
   --node "$NODE_BIN" \

@@ -32,20 +32,38 @@ async function main() {
   app.route('/api', healthRoutes(db));
   app.route('/api', setupRoutes(db, logger));
 
-  // Static client (built dashboard). In dev, Vite serves the client separately.
-  const clientDist = path.resolve(__dirname, '..', 'client');
-  if (fs.existsSync(clientDist)) {
-    app.use('/*', serveStatic({ root: path.relative(process.cwd(), clientDist) || '.' }));
+  // Static client (built dashboard). In dev, Vite serves the client separately
+  // and proxies /api to this server, so the production static-serving block
+  // below is only used when running under launchd.
+  //
+  // Candidates handle both `tsx` (running from src) and compiled (running from
+  // dist/server) launches.
+  const clientDistCandidates = [
+    path.resolve(__dirname, '..', '..', 'dist', 'client'),  // src/server  -> packages/web-app/dist/client
+    path.resolve(__dirname, '..', 'client'),                // dist/server -> packages/web-app/dist/client
+  ];
+  const clientDist = clientDistCandidates.find((p) => fs.existsSync(path.join(p, 'index.html')));
+
+  if (clientDist) {
+    const staticRoot = path.relative(process.cwd(), clientDist) || '.';
+    app.use(
+      '/*',
+      serveStatic({
+        root: staticRoot,
+        // Serve assets directly; everything that doesn't match a file falls
+        // through to the SPA fallback handler below.
+      }),
+    );
+    // SPA fallback for client-side routes like /setup, /dashboard, etc.
     app.get('*', (c) => {
-      const index = path.join(clientDist, 'index.html');
-      if (fs.existsSync(index)) {
-        return c.html(fs.readFileSync(index, 'utf8'));
-      }
-      return c.text('Dashboard not built. Run `npm run build:client`.', 503);
+      const indexHtml = path.join(clientDist, 'index.html');
+      return c.html(fs.readFileSync(indexHtml, 'utf8'));
     });
+    logger.info({ clientDist }, 'server: serving client bundle');
   } else {
+    logger.warn({ candidates: clientDistCandidates }, 'server: client bundle not found — run `npm run build`');
     app.get('/', (c) =>
-      c.text('Server running. Dashboard not built. Run `npm run dev` for development.'),
+      c.text('Server running. Client bundle not built — run `npm run build` (or `npm run dev` for development)'),
     );
   }
 
