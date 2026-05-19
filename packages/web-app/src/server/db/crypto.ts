@@ -1,7 +1,7 @@
 import os from 'node:os';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from 'node:crypto';
 import type { DB } from './init.js';
-import { getConfig, setConfig } from './init.js';
+import { getConfig, setConfig, registerTokenRetrievalCheck } from './init.js';
 
 const SERVICE = 'claude-project-memory';
 const ACCOUNT = 'github_token';
@@ -16,6 +16,12 @@ type KeyringMod = { Entry: new (service: string, account: string) => {
 type Mode = 'keyring' | 'aes-fallback';
 let activeMode: Mode | null = null;
 let keyring: KeyringMod | null = null;
+
+export function getActiveCryptoMode(): Mode | null {
+  return activeMode;
+}
+
+export const KEYRING_MARKER = 'keyring';
 
 async function tryLoadKeyring(): Promise<KeyringMod | null> {
   try {
@@ -44,6 +50,24 @@ export async function initCrypto(
       setConfig(db, FALLBACK_SALT_KEY, randomBytes(32).toString('base64'));
     }
     logger.warn('crypto: falling back to AES-256-GCM with machine-derived key (keyring unavailable)');
+  }
+  registerTokenRetrievalCheck(canRetrieveGithubToken);
+
+  // One-shot probe: log whether we can actually read the stored token (if any).
+  const stored = getConfig(db, 'github_token_ciphertext');
+  if (stored) {
+    const probe = canRetrieveGithubToken(db);
+    if (probe.ok) {
+      logger.info(
+        { backend: activeMode, marker: stored === KEYRING_MARKER ? 'keyring' : 'aes' },
+        'crypto: github token retrievable on startup',
+      );
+    } else {
+      logger.warn(
+        { backend: activeMode, reason: probe.reason },
+        'crypto: github token NOT retrievable — health will report needs_configuration until fixed',
+      );
+    }
   }
 }
 
@@ -79,20 +103,70 @@ export function storeGithubToken(db: DB, token: string): void {
   if (activeMode === null) throw new Error('crypto not initialized');
   if (activeMode === 'keyring' && keyring) {
     new keyring.Entry(SERVICE, ACCOUNT).setPassword(token);
-    setConfig(db, 'github_token_ciphertext', 'keyring');
+    setConfig(db, 'github_token_ciphertext', KEYRING_MARKER);
     return;
   }
   const key = deriveFallbackKey(db);
   setConfig(db, 'github_token_ciphertext', encryptAesGcm(token, key));
 }
 
-export function loadGithubToken(db: DB): string | null {
+/**
+ * Resolves the stored GitHub token to plaintext.
+ *
+ * - If config holds the `keyring` marker, read from the OS keychain (must be available).
+ *   The keychain backend is what holds the real secret; the marker just records *where*
+ *   the token lives.
+ * - Otherwise treat the stored value as AES-256-GCM ciphertext and decrypt with the
+ *   machine-derived fallback key.
+ *
+ * Throws a descriptive error when the token cannot be retrieved (used by the sync engine
+ * + isConfigured check so we never silently report healthy when the secret is unreachable).
+ */
+export function getGithubToken(db: DB): string {
   const stored = getConfig(db, 'github_token_ciphertext');
-  if (!stored) return null;
-  if (stored === 'keyring') {
-    if (!keyring) return null;
-    return new keyring.Entry(SERVICE, ACCOUNT).getPassword();
+  if (!stored) {
+    throw new Error('github_token_ciphertext missing from config');
+  }
+  if (stored === KEYRING_MARKER) {
+    if (!keyring) {
+      throw new Error(
+        'github_token marker is "keyring" but @napi-rs/keyring backend is not loaded. Re-run setup or check OS keychain access.',
+      );
+    }
+    const pw = new keyring.Entry(SERVICE, ACCOUNT).getPassword();
+    if (!pw) {
+      throw new Error(
+        'github_token marker is "keyring" but no entry was found in the OS keychain (service=claude-project-memory, account=github_token). Re-run setup.',
+      );
+    }
+    return pw;
   }
   const key = deriveFallbackKey(db);
   return decryptAesGcm(stored, key);
+}
+
+/**
+ * Non-throwing variant — returns null if the token cannot be loaded for any reason.
+ * Kept for backwards compatibility with existing callers (sync engine handles null
+ * by reporting an error state).
+ */
+export function loadGithubToken(db: DB): string | null {
+  try {
+    return getGithubToken(db);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True iff the github token is actually retrievable right now. Used by isConfigured so we
+ * don't report `status: 'ok'` when the marker exists but the secret can't be read.
+ */
+export function canRetrieveGithubToken(db: DB): { ok: boolean; reason?: string } {
+  try {
+    getGithubToken(db);
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, reason: String(err?.message ?? err) };
+  }
 }

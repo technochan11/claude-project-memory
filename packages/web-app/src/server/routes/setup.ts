@@ -5,6 +5,7 @@ import { setConfig, isConfigured } from '../db/init.js';
 import { storeGithubToken } from '../db/crypto.js';
 import { ensureRepo, validateToken } from '../sync/github.js';
 import type { Logger } from 'pino';
+import { start as startSyncEngine } from '../sync/engine.js';
 
 export function setupRoutes(db: DB, logger: Logger): Hono {
   const app = new Hono();
@@ -41,6 +42,11 @@ export function setupRoutes(db: DB, logger: Logger): Hono {
       storeGithubToken(db, github_token);
       setConfig(db, 'github_repo', result.full_name);
       logger.info({ repo: result.full_name, created: result.created }, 'setup: complete');
+      try {
+        startSyncEngine(db, logger);
+      } catch (e: any) {
+        logger.warn({ err: String(e?.message ?? e) }, 'setup: sync engine start failed');
+      }
       return c.json({ ok: true, repo: result.full_name, created: result.created });
     } catch (err: any) {
       logger.error({ err: String(err?.message ?? err) }, 'setup: ensureRepo failed');

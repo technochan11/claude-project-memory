@@ -12,6 +12,14 @@ import { corsMiddleware } from './middleware/cors.js';
 import { makeAuthMiddleware } from './middleware/auth.js';
 import { healthRoutes } from './routes/health.js';
 import { setupRoutes } from './routes/setup.js';
+import { projectsRoutes } from './routes/projects.js';
+import { reviewsRoutes } from './routes/reviews.js';
+import { activityRoutes } from './routes/activity.js';
+import { searchRoutes } from './routes/search.js';
+import { syncRoutes } from './routes/sync.js';
+import { start as startSyncEngine } from './sync/engine.js';
+import { dailySweep } from './projects/pruning.js';
+import { isConfigured } from './db/init.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,6 +39,24 @@ async function main() {
 
   app.route('/api', healthRoutes(db));
   app.route('/api', setupRoutes(db, logger));
+  app.route('/api', projectsRoutes(db, logger));
+  app.route('/api', reviewsRoutes(db));
+  app.route('/api', activityRoutes(db));
+  app.route('/api', searchRoutes(db));
+  app.route('/api', syncRoutes());
+
+  // Start sync engine and run daily sweep once the DB is configured.
+  if (isConfigured(db)) {
+    startSyncEngine(db, logger);
+    try {
+      const swept = dailySweep(db);
+      if (swept.hardDeleted.length > 0) {
+        logger.info({ count: swept.hardDeleted.length }, 'pruning: hard-deleted expired entries on startup');
+      }
+    } catch (e: any) {
+      logger.warn({ err: String(e?.message ?? e) }, 'pruning: dailySweep failed');
+    }
+  }
 
   // Static client (built dashboard). In dev, Vite serves the client separately
   // and proxies /api to this server, so the production static-serving block

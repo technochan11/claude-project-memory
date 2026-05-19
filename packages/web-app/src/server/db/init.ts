@@ -65,17 +65,50 @@ function seedSchemaMeta(db: DB): void {
   ).run({ v: SCHEMA_VERSION });
 }
 
+function backfillFts(db: DB): void {
+  const row = db.prepare<unknown[], { c: number }>('SELECT COUNT(*) AS c FROM reference_entries_fts').get();
+  if ((row?.c ?? 0) > 0) return;
+  const refRow = db.prepare<unknown[], { c: number }>('SELECT COUNT(*) AS c FROM reference_entries').get();
+  if (!refRow || refRow.c === 0) return;
+  db.exec(
+    'INSERT INTO reference_entries_fts(rowid, content, project_id) SELECT rowid, content, project_id FROM reference_entries',
+  );
+}
+
+function ensureCleanFts(db: DB): void {
+  // FTS5 external-content tables must have column names matching the source table.
+  // Older builds may have created the FTS with an `entry_id` column — drop and rebuild.
+  const row = db
+    .prepare<unknown[], { sql: string | null }>(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='reference_entries_fts'",
+    )
+    .get();
+  if (row?.sql && row.sql.includes('entry_id')) {
+    db.exec('DROP TRIGGER IF EXISTS reference_entries_ai');
+    db.exec('DROP TRIGGER IF EXISTS reference_entries_ad');
+    db.exec('DROP TRIGGER IF EXISTS reference_entries_au');
+    db.exec('DROP TABLE IF EXISTS reference_entries_fts');
+  }
+}
+
 export function initDb(): DB {
   if (dbInstance) return dbInstance;
   ensureDataDir();
   const db = new Database(getDbPath());
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+  ensureCleanFts(db);
   db.exec(loadSchema());
   seedSchemaMeta(db);
   seedConfigIfMissing(db);
+  backfillFts(db);
   dbInstance = db;
   return db;
+}
+
+export function getDb(): DB {
+  if (!dbInstance) throw new Error('Database not initialized');
+  return dbInstance;
 }
 
 export function getConfig(db: DB, key: string): string | null {
@@ -96,6 +129,37 @@ export function getPort(db: DB): number {
   return v ? Number(v) : DEFAULT_PORT;
 }
 
+/**
+ * Token-retrieval probe registered by initCrypto. Until crypto is initialized this is
+ * null, so isConfigured() will conservatively return false. This avoids a circular
+ * module-level import between init.ts and crypto.ts.
+ */
+let tokenRetrievable: ((db: DB) => { ok: boolean; reason?: string }) | null = null;
+
+export function registerTokenRetrievalCheck(
+  fn: (db: DB) => { ok: boolean; reason?: string },
+): void {
+  tokenRetrievable = fn;
+}
+
+/**
+ * Configuration is "complete" when the github_repo is set AND the github token is
+ * *actually retrievable* via the active crypto backend. The marker alone is not
+ * enough — if the keychain entry was deleted out from under us, we want
+ * `status: 'needs_configuration'`, not a silently-broken `ok`.
+ */
 export function isConfigured(db: DB): boolean {
-  return Boolean(getConfig(db, 'github_token_ciphertext') && getConfig(db, 'github_repo'));
+  if (!getConfig(db, 'github_repo')) return false;
+  if (!getConfig(db, 'github_token_ciphertext')) return false;
+  if (!tokenRetrievable) return false; // initCrypto hasn't completed yet
+  return tokenRetrievable(db).ok;
+}
+
+/** Returns the reason isConfigured() is false (useful for logging). Returns null if configured. */
+export function configurationProblem(db: DB): string | null {
+  if (!getConfig(db, 'github_repo')) return 'github_repo not set';
+  if (!getConfig(db, 'github_token_ciphertext')) return 'github_token_ciphertext not set';
+  if (!tokenRetrievable) return 'crypto backend not initialized yet';
+  const r = tokenRetrievable(db);
+  return r.ok ? null : (r.reason ?? 'token not retrievable');
 }

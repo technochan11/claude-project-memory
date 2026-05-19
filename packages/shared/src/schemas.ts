@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EVENT_TYPES, REFERENCE_CATEGORIES } from './constants.js';
+import { EVENT_TYPES, PROJECT_SLUG_REGEX, REFERENCE_CATEGORIES } from './constants.js';
 
 export const HealthStatusSchema = z.object({
   status: z.enum(['ok', 'needs_configuration']),
@@ -16,10 +16,66 @@ export const SetupCompleteRequestSchema = z.object({
 });
 export type SetupCompleteRequest = z.infer<typeof SetupCompleteRequestSchema>;
 
+export const ProjectSlugSchema = z
+  .string()
+  .min(2)
+  .max(64)
+  .regex(PROJECT_SLUG_REGEX, 'Slug must be kebab-case (a-z, 0-9, dashes; not at ends)');
+
+export const ReferenceCategorySchema = z.enum(REFERENCE_CATEGORIES);
+
+export const SeedEntryInputSchema = z.object({
+  content: z.string().min(1).max(2000),
+  category: ReferenceCategorySchema,
+  confidence: z.number().min(0).max(1).default(1.0),
+});
+export type SeedEntryInput = z.infer<typeof SeedEntryInputSchema>;
+
+export const ProjectCreateRequestSchema = z.object({
+  id: ProjectSlugSchema,
+  display_name: z.string().min(1).max(120),
+  description: z.string().min(1).max(2000),
+  seed_entries: z.array(SeedEntryInputSchema).min(3).max(10),
+});
+export type ProjectCreateRequest = z.infer<typeof ProjectCreateRequestSchema>;
+
+export const ProjectUpdateRequestSchema = z.object({
+  display_name: z.string().min(1).max(120).optional(),
+  description: z.string().min(1).max(2000).optional(),
+  reference_token_budget: z.number().int().positive().max(50000).optional(),
+});
+export type ProjectUpdateRequest = z.infer<typeof ProjectUpdateRequestSchema>;
+
+export const EntryCreateRequestSchema = z.object({
+  content: z.string().min(1).max(2000),
+  category: ReferenceCategorySchema,
+  confidence: z.number().min(0).max(1).default(1.0),
+});
+export type EntryCreateRequest = z.infer<typeof EntryCreateRequestSchema>;
+
+export const EntryUpdateRequestSchema = z.object({
+  content: z.string().min(1).max(2000).optional(),
+  category: ReferenceCategorySchema.optional(),
+  confidence: z.number().min(0).max(1).optional(),
+});
+export type EntryUpdateRequest = z.infer<typeof EntryUpdateRequestSchema>;
+
+export const SupersessionResolutionSchema = z.object({
+  resolution: z.enum(['supersedes', 'both', 'not_related']),
+});
+export type SupersessionResolution = z.infer<typeof SupersessionResolutionSchema>;
+
+export const SearchRequestSchema = z.object({
+  q: z.string().min(1).max(500),
+  mode: z.enum(['keyword', 'semantic']).default('keyword'),
+  project: z.string().optional(),
+});
+export type SearchRequest = z.infer<typeof SearchRequestSchema>;
+
 export const ReferenceEntrySchema = z.object({
   id: z.string(),
   project_id: z.string(),
-  category: z.enum(REFERENCE_CATEGORIES),
+  category: ReferenceCategorySchema,
   content: z.string().min(1),
   confidence: z.number().min(0).max(1).optional(),
   reference_count: z.number().int().nonnegative().default(0),
@@ -49,3 +105,12 @@ export const EventSchema = z.object({
   payload: z.record(z.unknown()),
 });
 export type Event = z.infer<typeof EventSchema>;
+
+export const SyncStatusSchema = z.object({
+  state: z.enum(['green', 'yellow', 'red']),
+  last_sync_at: z.number().int().nullable(),
+  pending_event_count: z.number().int().nonnegative(),
+  pending_review_count: z.number().int().nonnegative(),
+  last_error: z.string().nullable(),
+});
+export type SyncStatus = z.infer<typeof SyncStatusSchema>;

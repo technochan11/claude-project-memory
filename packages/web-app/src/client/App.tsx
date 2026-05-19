@@ -1,7 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { Setup } from './pages/Setup.js';
-import { Dashboard } from './pages/Dashboard.js';
+import { AppShell } from './layout/AppShell.js';
+import { ProjectList } from './pages/ProjectList.js';
+import { ProjectNew } from './pages/ProjectNew.js';
+import { ProjectDetail } from './pages/ProjectDetail.js';
+import { PrunedEntries } from './pages/PrunedEntries.js';
+import { Activity } from './pages/Activity.js';
+import { Search } from './pages/Search.js';
+import { Reviews } from './pages/Reviews.js';
+import { Settings } from './pages/Settings.js';
 
 type Health = { status: 'ok' | 'needs_configuration'; embeddings_ready: boolean };
 
@@ -22,7 +30,7 @@ function useHealth(): { health: Health | null; error: string | null; refresh: ()
 
   useEffect(() => {
     refresh();
-    const id = setInterval(refresh, 3000);
+    const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
   }, [refresh]);
 
@@ -42,7 +50,7 @@ function RootRedirect(): React.ReactElement {
     );
   }
   if (!health) return <Loading />;
-  return <Navigate to={health.status === 'ok' ? '/dashboard' : '/setup'} replace />;
+  return <Navigate to={health.status === 'ok' ? '/projects' : '/setup'} replace />;
 }
 
 function Loading(): React.ReactElement {
@@ -53,21 +61,20 @@ function SetupRoute(): React.ReactElement {
   const { health, error, refresh } = useHealth();
   const navigate = useNavigate();
   useEffect(() => {
-    if (health?.status === 'ok') navigate('/dashboard', { replace: true });
+    if (health?.status === 'ok') navigate('/projects', { replace: true });
   }, [health, navigate]);
-  if (error) return <Loading />;
-  if (!health) return <Loading />;
+  if (error || !health) return <Loading />;
   return <Setup onComplete={refresh} embeddingsReady={health.embeddings_ready} />;
 }
 
-function DashboardRoute(): React.ReactElement {
-  const { health, error } = useHealth();
+function RequireConfigured({ children }: { children: React.ReactNode }): React.ReactElement {
+  const { health } = useHealth();
   const navigate = useNavigate();
   useEffect(() => {
     if (health?.status === 'needs_configuration') navigate('/setup', { replace: true });
   }, [health, navigate]);
-  if (error || !health) return <Loading />;
-  return <Dashboard embeddingsReady={health.embeddings_ready} />;
+  if (!health) return <Loading />;
+  return <>{children}</>;
 }
 
 export function App(): React.ReactElement {
@@ -76,7 +83,17 @@ export function App(): React.ReactElement {
       <Routes>
         <Route path="/" element={<RootRedirect />} />
         <Route path="/setup" element={<SetupRoute />} />
-        <Route path="/dashboard" element={<DashboardRoute />} />
+        <Route element={<RequireConfigured><AppShell /></RequireConfigured>}>
+          <Route path="/projects" element={<ProjectList />} />
+          <Route path="/projects/new" element={<ProjectNew />} />
+          <Route path="/projects/:id" element={<ProjectDetail />} />
+          <Route path="/projects/:id/pruned" element={<PrunedEntries />} />
+          <Route path="/activity" element={<Activity />} />
+          <Route path="/search" element={<Search />} />
+          <Route path="/reviews" element={<Reviews />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/dashboard" element={<Navigate to="/projects" replace />} />
+        </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

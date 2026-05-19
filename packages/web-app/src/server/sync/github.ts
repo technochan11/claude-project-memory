@@ -98,6 +98,131 @@ export async function ensureRepo(token: string, repoName: string): Promise<Ensur
   return { owner, repo: repoName, created, full_name: `${owner}/${repoName}` };
 }
 
+export interface FileChange {
+  path: string;
+  content: string | null; // null means delete
+}
+
+export interface CommitBatchResult {
+  commit_sha: string;
+  ratelimit_remaining: number | null;
+  files_committed: number;
+}
+
+/**
+ * Commits multiple file changes as a single Git tree commit on the default branch.
+ * Uses the lower-level Git Data API so we batch arbitrary file changes per push.
+ */
+export async function commitBatch(
+  token: string,
+  owner: string,
+  repo: string,
+  files: FileChange[],
+  message: string,
+): Promise<CommitBatchResult> {
+  if (files.length === 0) {
+    throw new Error('commitBatch: no files');
+  }
+  const octokit = new Octokit({ auth: token });
+
+  const repoInfo = await octokit.rest.repos.get({ owner, repo });
+  const defaultBranch = repoInfo.data.default_branch;
+
+  const ref = await octokit.rest.git.getRef({ owner, repo, ref: `heads/${defaultBranch}` });
+  const latestCommitSha = ref.data.object.sha;
+  const latestCommit = await octokit.rest.git.getCommit({ owner, repo, commit_sha: latestCommitSha });
+  const baseTreeSha = latestCommit.data.tree.sha;
+
+  // Build tree entries. For deletes we use sha: null.
+  const treeEntries: Array<{
+    path: string;
+    mode: '100644';
+    type: 'blob';
+    sha?: string | null;
+    content?: string;
+  }> = [];
+
+  for (const file of files) {
+    if (file.content === null) {
+      treeEntries.push({ path: file.path, mode: '100644', type: 'blob', sha: null });
+    } else {
+      // Use inline content (octokit base64-encodes). For larger files, blob upload would be cheaper.
+      treeEntries.push({ path: file.path, mode: '100644', type: 'blob', content: file.content });
+    }
+  }
+
+  const newTree = await octokit.rest.git.createTree({
+    owner,
+    repo,
+    base_tree: baseTreeSha,
+    tree: treeEntries,
+  });
+
+  const newCommit = await octokit.rest.git.createCommit({
+    owner,
+    repo,
+    message,
+    tree: newTree.data.sha,
+    parents: [latestCommitSha],
+  });
+
+  const updated = await octokit.rest.git.updateRef({
+    owner,
+    repo,
+    ref: `heads/${defaultBranch}`,
+    sha: newCommit.data.sha,
+  });
+
+  const rl = updated.headers['x-ratelimit-remaining'];
+  const ratelimit = rl ? Number(rl) : null;
+
+  return {
+    commit_sha: newCommit.data.sha,
+    ratelimit_remaining: Number.isFinite(ratelimit ?? NaN) ? (ratelimit as number) : null,
+    files_committed: files.length,
+  };
+}
+
+export async function getOwnerLogin(token: string): Promise<string> {
+  const octokit = new Octokit({ auth: token });
+  const me = await octokit.rest.users.getAuthenticated();
+  return me.data.login;
+}
+
+export async function getFileContent(
+  token: string,
+  owner: string,
+  repo: string,
+  path: string,
+): Promise<string | null> {
+  const octokit = new Octokit({ auth: token });
+  try {
+    const res = await octokit.rest.repos.getContent({ owner, repo, path });
+    if (Array.isArray(res.data) || !('content' in res.data)) return null;
+    return Buffer.from(res.data.content, 'base64').toString('utf8');
+  } catch (err: any) {
+    if (err?.status === 404) return null;
+    throw err;
+  }
+}
+
+export async function listDirectory(
+  token: string,
+  owner: string,
+  repo: string,
+  path: string,
+): Promise<string[]> {
+  const octokit = new Octokit({ auth: token });
+  try {
+    const res = await octokit.rest.repos.getContent({ owner, repo, path });
+    if (!Array.isArray(res.data)) return [];
+    return res.data.map((d) => d.path);
+  } catch (err: any) {
+    if (err?.status === 404) return [];
+    throw err;
+  }
+}
+
 async function ensureFile(
   octokit: Octokit,
   owner: string,

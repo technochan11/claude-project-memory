@@ -150,3 +150,31 @@ CREATE TABLE IF NOT EXISTS config (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Phase 2: FTS5 index over reference_entries.content for keyword search.
+-- External-content table; FTS column names must match content table column names
+-- (we use `content` and `project_id`, both present on reference_entries).
+-- The entry id is reachable via rowid join.
+CREATE VIRTUAL TABLE IF NOT EXISTS reference_entries_fts USING fts5(
+  content,
+  project_id UNINDEXED,
+  content='reference_entries',
+  content_rowid='rowid'
+);
+
+CREATE TRIGGER IF NOT EXISTS reference_entries_ai AFTER INSERT ON reference_entries BEGIN
+  INSERT INTO reference_entries_fts(rowid, content, project_id)
+  VALUES (new.rowid, new.content, new.project_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS reference_entries_ad AFTER DELETE ON reference_entries BEGIN
+  INSERT INTO reference_entries_fts(reference_entries_fts, rowid, content, project_id)
+  VALUES('delete', old.rowid, old.content, old.project_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS reference_entries_au AFTER UPDATE ON reference_entries BEGIN
+  INSERT INTO reference_entries_fts(reference_entries_fts, rowid, content, project_id)
+  VALUES('delete', old.rowid, old.content, old.project_id);
+  INSERT INTO reference_entries_fts(rowid, content, project_id)
+  VALUES (new.rowid, new.content, new.project_id);
+END;
