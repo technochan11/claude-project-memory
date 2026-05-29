@@ -12,6 +12,7 @@ import { corsMiddleware } from './middleware/cors.js';
 import { makeAuthMiddleware } from './middleware/auth.js';
 import { healthRoutes } from './routes/health.js';
 import { setupRoutes } from './routes/setup.js';
+import { settingsRoutes } from './routes/settings.js';
 import { projectsRoutes } from './routes/projects.js';
 import { reviewsRoutes } from './routes/reviews.js';
 import { activityRoutes } from './routes/activity.js';
@@ -19,7 +20,8 @@ import { searchRoutes } from './routes/search.js';
 import { syncRoutes } from './routes/sync.js';
 import { start as startSyncEngine } from './sync/engine.js';
 import { dailySweep } from './projects/pruning.js';
-import { isConfigured } from './db/init.js';
+import { getConfig, isConfigured } from './db/init.js';
+import { startDownload as startLlmDownload } from './llm/local.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,6 +32,15 @@ async function main() {
   await initCrypto(db, logger);
   startWarmup(logger);
 
+  // Auto-warm the local LLM only if the user has previously opted in via Settings.
+  // With a warm Hugging Face cache this resolves in seconds; otherwise it
+  // streams weights in the background while the rest of the server starts.
+  if (getConfig(db, 'ai_enabled') === 'true') {
+    void startLlmDownload(logger).catch((err) => {
+      logger.warn({ err: String(err?.message ?? err) }, 'llm: auto-warm failed');
+    });
+  }
+
   const port = getPort(db);
   const ownOrigin = `http://localhost:${port}`;
 
@@ -39,6 +50,7 @@ async function main() {
 
   app.route('/api', healthRoutes(db));
   app.route('/api', setupRoutes(db, logger));
+  app.route('/api', settingsRoutes(db, logger));
   app.route('/api', projectsRoutes(db, logger));
   app.route('/api', reviewsRoutes(db));
   app.route('/api', activityRoutes(db));

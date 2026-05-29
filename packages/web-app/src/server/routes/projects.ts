@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Logger } from 'pino';
+import { z } from 'zod';
 import type { DB } from '../db/init.js';
 import {
   EntryCreateRequestSchema,
@@ -24,6 +25,17 @@ import { isReady as embeddingsReady } from '../embeddings/index.js';
 import { listPendingForProject } from '../projects/supersession.js';
 import { listPruned, restoreEntry } from '../projects/pruning.js';
 import { requestImmediateFlush } from '../sync/engine.js';
+import {
+  generateSeedEntries,
+  getModelStatus as getLlmStatus,
+  GenerationParseError,
+  ModelNotLoadedError,
+} from '../llm/local.js';
+
+const GenerateSeedRequestSchema = z.object({
+  display_name: z.string().min(1).max(120),
+  description: z.string().min(1).max(2000),
+});
 
 function ensureEmbeddingsReady(c: any): Response | null {
   if (!embeddingsReady()) {
@@ -35,10 +47,46 @@ function ensureEmbeddingsReady(c: any): Response | null {
   return null;
 }
 
-export function projectsRoutes(db: DB, _logger: Logger): Hono {
+export function projectsRoutes(db: DB, logger: Logger): Hono {
   const app = new Hono();
 
   app.get('/projects', (c) => c.json({ projects: listProjects(db) }));
+
+  app.post('/projects/generate-seed-entries', async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Body must be JSON.' }, 400);
+    }
+    const parsed = GenerateSeedRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues.map((i) => i.message).join('; ') }, 400);
+    }
+    if (getLlmStatus().state !== 'ready') {
+      return c.json(
+        { error: 'model_not_loaded', hint: 'Enable AI features in Settings' },
+        503,
+      );
+    }
+    try {
+      const entries = await generateSeedEntries(parsed.data.display_name, parsed.data.description);
+      return c.json({ entries });
+    } catch (err: unknown) {
+      if (err instanceof ModelNotLoadedError) {
+        return c.json(
+          { error: 'model_not_loaded', hint: 'Enable AI features in Settings' },
+          503,
+        );
+      }
+      if (err instanceof GenerationParseError) {
+        logger.warn({ err: err.message }, 'llm: generation parse failed');
+        return c.json({ error: 'generation_parse_failed', message: err.message }, 502);
+      }
+      logger.error({ err: String((err as Error)?.message ?? err) }, 'llm: generation failed');
+      return c.json({ error: String((err as Error)?.message ?? err) }, 500);
+    }
+  });
 
   app.post('/projects', async (c) => {
     const block = ensureEmbeddingsReady(c);
